@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/.idea/
+**/.git/
+**/.gitignore
+**/.dockerignore
+**/Dockerfile
+**/*.md
+**/*.log
+**/.env
+**/.env.*
+**/node_modules/
+**/.DS_Store
