@@ -1,33 +1,7 @@
-# Build output
-**/bin/
-**/obj/
-**/out/
-**/publish/
-
-# IDE
+bin/
+obj/
 .vs/
-.vscode/
 .idea/
 *.user
 *.suo
-
-# .NET specific
-*.pdb
-*.dll.config
-*.pdb.config
-
-# User secrets
-secrets.json
-
-# Logs
-*.log
-logs/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Env files (should never live in this repo)
 .env
-.env.local
-.env.*.local

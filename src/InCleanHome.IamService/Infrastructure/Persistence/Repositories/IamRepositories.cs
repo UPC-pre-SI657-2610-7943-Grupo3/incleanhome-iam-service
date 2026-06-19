@@ -21,3 +21,10 @@ public class UserRepository(IamDbContext context) : BaseRepository<User>(context
             .Select(u => u.DeviceToken)
             .FirstOrDefaultAsync();
 }
+
+public class WorkerDocumentRepository(IamDbContext context)
+    : BaseRepository<WorkerDocument>(context), IWorkerDocumentRepository
+{
+    public async Task<IEnumerable<WorkerDocument>> FindByUserIdAsync(int userId)
+        => await Context.Set<WorkerDocument>().Where(d => d.UserId == userId).ToListAsync();
+}

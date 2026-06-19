@@ -5,14 +5,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace InCleanHome.IamService.Infrastructure.Persistence;
 
-/// <summary>
-///     Database context for the IAM bounded context only.
-/// </summary>
-/// <remarks>
-///     Owns the User and WorkerDocument aggregates and applies snake_case naming
-///     conventions so PostgreSQL columns look like <c>password_hash</c>,
-///     <c>worker_documents</c>, etc.
-/// </remarks>
 public class IamDbContext(DbContextOptions<IamDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
@@ -28,7 +20,6 @@ public class IamDbContext(DbContextOptions<IamDbContext> options) : DbContext(op
     {
         base.OnModelCreating(builder);
 
-        // User aggregate
         builder.Entity<User>().HasKey(u => u.Id);
         builder.Entity<User>().Property(u => u.Id).IsRequired().ValueGeneratedOnAdd();
         builder.Entity<User>().Property(u => u.Email).IsRequired().HasMaxLength(120);
@@ -45,7 +36,6 @@ public class IamDbContext(DbContextOptions<IamDbContext> options) : DbContext(op
         builder.Entity<User>().Property(u => u.DeviceToken).HasMaxLength(500);
         builder.Entity<User>().HasIndex(u => u.Email).IsUnique();
 
-        // WorkerDocument aggregate
         builder.Entity<WorkerDocument>().HasKey(d => d.Id);
         builder.Entity<WorkerDocument>().Property(d => d.Id).IsRequired().ValueGeneratedOnAdd();
         builder.Entity<WorkerDocument>().Property(d => d.UserId).IsRequired();
@@ -53,7 +43,6 @@ public class IamDbContext(DbContextOptions<IamDbContext> options) : DbContext(op
         builder.Entity<WorkerDocument>().Property(d => d.FileName).IsRequired().HasMaxLength(200);
         builder.Entity<WorkerDocument>().Property(d => d.FileBase64).IsRequired().HasColumnType("TEXT");
 
-        // Apply snake_case naming to tables, columns, keys, indexes, etc.
         builder.UseSnakeCaseNamingConvention();
     }
 }

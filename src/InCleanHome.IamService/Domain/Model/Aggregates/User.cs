@@ -16,21 +16,19 @@ public class User
     public string Role { get; private set; } = UserRole.Client;
     public bool IsVerified { get; private set; }
     public bool DocumentsVerified { get; private set; }
-    /// <summary>True once the worker has uploaded both required documents. Account stays unverified until admin approves.</summary>
+
+    /// <summary>True once the worker has uploaded both required documents. Stays unverified until admin approves.</summary>
     public bool DocumentsUploaded { get; private set; }
 
     /// <summary>True when admin explicitly rejected the worker's documents and worker has not yet re-uploaded.</summary>
     public bool DocumentsRejected { get; private set; }
 
-    // Password recovery: one-time token with expiry.
     [JsonIgnore] public string? ResetToken { get; private set; }
     [JsonIgnore] public DateTimeOffset? ResetTokenExpiresAt { get; private set; }
 
-    // Temporary account suspension.
     public DateTimeOffset? SuspendedUntil { get; private set; }
     public string? SuspensionReason { get; private set; }
 
-    // Firebase Cloud Messaging device/browser token.
     [JsonIgnore] public string? DeviceToken { get; private set; }
 
     public User() { }
@@ -40,7 +38,6 @@ public class User
         Email             = email;
         PasswordHash      = passwordHash;
         Role              = UserRole.IsValid(role) ? role : UserRole.Client;
-        // Clients are auto-verified on sign-up. Workers must upload documents and be approved.
         IsVerified        = role == UserRole.Client;
         DocumentsVerified = role == UserRole.Client;
     }
@@ -49,7 +46,6 @@ public class User
     public User UpdateEmail(string email)               { Email = email; return this; }
     public User Verify()                                { IsVerified = true; return this; }
 
-    /// <summary>Marks both documents submitted. Stays unverified until admin approves. Clears any previous rejection.</summary>
     public User MarkDocumentsAsUploaded()
     {
         DocumentsUploaded = true;
@@ -57,7 +53,6 @@ public class User
         return this;
     }
 
-    /// <summary>Called by admin to fully approve a worker's account.</summary>
     public User MarkDocumentsAsVerified()
     {
         DocumentsVerified = true;
@@ -67,7 +62,6 @@ public class User
         return this;
     }
 
-    /// <summary>Called by admin to reject a worker's submitted documents. Worker can re-upload.</summary>
     public User MarkDocumentsAsRejected()
     {
         DocumentsVerified = false;

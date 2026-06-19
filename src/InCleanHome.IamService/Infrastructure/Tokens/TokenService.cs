@@ -28,7 +28,7 @@ public class TokenService(IOptions<TokenSettings> tokenSettings) : ITokenService
                 new Claim(ClaimTypes.Name, user.Email),
                 new Claim(ClaimTypes.Role, user.Role)
             }),
-            Expires            = DateTime.UtcNow.AddDays(_tokenSettings.ExpirationDays),
+            Expires = DateTime.UtcNow.AddDays(_tokenSettings.ExpirationDays),
             SigningCredentials = new SigningCredentials(
                 new SymmetricSecurityKey(key),
                 SecurityAlgorithms.HmacSha256Signature)

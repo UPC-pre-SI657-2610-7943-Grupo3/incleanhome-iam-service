@@ -1,149 +1,90 @@
 # InCleanHome IAM Service
-> Identity and Access Management microservice for InCleanHome.
 
-This service owns the `User` and `WorkerDocument` aggregates. It is responsible for:
+> Identity & Access Management microservice.
 
-- Registering users (local password + Auth0).
-- Issuing and validating JWT tokens for the rest of the platform.
-- Administrative operations: verifying users, approving/rejecting worker documents,
-  suspending accounts.
-- Storing FCM device tokens.
+Owns the `User` and `WorkerDocument` aggregates. Handles:
+- Login via **Auth0** (Universal Login + JWT exchange).
+- JWT issuance for the rest of the platform.
+- Admin operations: verify users, approve/reject worker documents, suspend accounts.
+- FCM device token storage.
 
-This service is part of the larger [InCleanHome platform](https://github.com/UPC-pre-SI657-2610-7943-Grupo3/incleanhome-platform).
+## Endpoints
 
-## Architecture in one paragraph
-Standard DDD layering: Domain (aggregates, value objects, commands, queries,
-repository contracts) → Application (command/query services) → Infrastructure
-(EF Core persistence, BCrypt hashing, JWT generation, Auth0 client, custom
-auth middleware) → Interfaces (REST controllers + DTOs). The service reads its
-non-sensitive config (JWT issuer/audience, Auth0 settings, CORS origins, admin
-seed email) from **Consul KV** at startup and falls back to `appsettings.json`
-if Consul is unreachable. Secrets (database password, JWT signing key, Auth0
-client secret) come from environment variables.
+### Public (no JWT)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/auth/auth0/status` | Is Auth0 enabled? |
+| POST | `/api/auth/auth0/login` | Exchange Auth0 token for our JWT |
+| POST | `/api/auth/auth0/complete-registration` | Create User + create Profile in one shot (calls Profile Service) |
 
-## Folder layout (Clean Architecture)
+### Authenticated
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/auth/me` | Get current user (with name/phone from Profile) |
+| POST | `/api/auth/worker/upload-document` | Worker uploads PDF |
+| POST | `/api/auth/device-token` | Register FCM token |
+
+### Admin only
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/admin/users` | List all users |
+| PATCH | `/api/admin/users/{id}/verify` | Verify a user |
+| PATCH | `/api/admin/users/{id}/approve-documents` | Approve worker docs (publishes `WorkerDocumentsApprovedEvent`) |
+| PATCH | `/api/admin/users/{id}/reject-documents` | Reject worker docs (publishes `WorkerDocumentsRejectedEvent`) |
+| PATCH | `/api/admin/users/{id}/suspend` | Suspend user (publishes `UserSuspendedEvent`) |
+| PATCH | `/api/admin/users/{id}/clear-suspension` | Lift suspension (publishes `UserSuspensionClearedEvent`) |
+| GET | `/api/admin/users/{id}/documents` | Get worker docs |
+| DELETE | `/api/admin/users/{id}` | Delete user (publishes `UserDeletedEvent`) |
+
+## Events published
+
+To exchange `incleanhome.iam.events` on the broker:
+
+- `UserRegistered` (on /complete-registration success)
+- `WorkerDocumentsApproved`
+- `WorkerDocumentsRejected`
+- `UserSuspended`
+- `UserSuspensionCleared`
+- `UserDeleted`
+
+If `RABBITMQ_URL` is the placeholder, events are silently dropped (no crashes).
+
+## External dependencies
+
+- **Auth0** — RS256 token validation + /userinfo
+- **Profile Service** (HTTP) — to resolve name/phone and to create profiles on registration
+- **CloudAMQP** (RabbitMQ) — event publishing
+
+## Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `JWT_SIGNING_KEY` | YES | At least 32 chars; same key the gateway and other services validate |
+| `IAM_DB_CONNECTION` | YES | PostgreSQL connection string |
+| `CONSUL_HTTP_ADDR` | no | Default `http://consul:8500` |
+| `RABBITMQ_URL` | no | Format `amqps://user:pass@host/vhost`. Placeholder = no broker |
+| `AUTH0_CLIENT_SECRET` | only if Auth0 enabled | Auth0 application secret |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If both set, an admin user is seeded |
+
+## Run
+
+This service runs as part of the platform:
+```bash
+cd ../incleanhome-platform
+docker compose up --build -d iam-service
 ```
-src/InCleanHome.IamService/
-├── Program.cs                              # composition root
-├── appsettings.json                        # fallback config
-│
-├── Configuration/
-│   └── ConsulConfigurationLoader.cs        # loads config/iam-service from KV
-│
-├── Discovery/
-│   ├── ConsulServiceRegistration.cs        # HTTP client for register/deregister
-│   └── ConsulRegistrationHostedService.cs  # lifecycle
-│
-├── Domain/
-│   ├── Model/
-│   │   ├── Aggregates/    (User, WorkerDocument)
-│   │   ├── ValueObjects/  (UserRole, DocumentType)
-│   │   ├── Commands/      (Register, Login, Verify, Suspend, ...)
-│   │   └── Queries/       (GetUserById, GetUserByEmail, ...)
-│   ├── Repositories/      (IUserRepository, IWorkerDocumentRepository, IUnitOfWork)
-│   └── Services/          (IUserCommandService, IUserQueryService)
-│
-├── Application/
-│   └── Internal/
-│       ├── CommandServices/UserCommandService.cs
-│       ├── QueryServices/UserQueryService.cs
-│       └── OutboundServices/             (IHashingService, ITokenService)
-│
-├── Infrastructure/
-│   ├── Persistence/
-│   │   ├── IamDbContext.cs               # EF Core context (snake_case naming)
-│   │   ├── BaseRepository.cs
-│   │   ├── Repositories/
-│   │   │   ├── UserRepository.cs
-│   │   │   └── WorkerDocumentRepository.cs
-│   │   └── Extensions/ModelBuilderExtensions.cs
-│   ├── Hashing/HashingService.cs         # BCrypt
-│   ├── Tokens/                            # JWT issuance & validation
-│   ├── ExternalServices/Auth0/           # JWKS validation + /userinfo
-│   ├── Pipeline/                          # custom JWT middleware
-│   └── Seeding/AdminSeeder.cs            # seeds the admin user on startup
-│
-└── Interfaces/
-    └── REST/
-        ├── Controllers/
-        │   ├── AuthenticationController.cs   # register, login, me, upload-doc, device-token
-        │   ├── Auth0LoginController.cs       # status, login, complete-registration
-        │   └── AdminController.cs            # admin user management
-        └── Transform/UserPayloadAssembler.cs
-```
 
+Direct access (bypassing gateway): http://localhost:5001
+Swagger UI (with "Authorize" button): http://localhost:5001/swagger
 
-The IAM Service runs on port `5001` internally. From outside the Docker network,
-the only way to reach it is through the API Gateway at `http://localhost:8080`.
+## Architecture notes
 
-## API endpoints
-All paths assume the gateway prefix is stripped. From the frontend's perspective:
-
-| Method | Path via gateway | Purpose | Auth |
-|---|---|---|---|
-| POST | `/api/v1/auth/register` | Local password registration | none |
-| POST | `/api/v1/auth/login` | Local password login | none |
-| GET  | `/api/v1/auth/me` | Returns current authenticated user | Bearer JWT |
-| POST | `/api/v1/auth/worker/upload-document` | Worker uploads PDF | Bearer JWT (worker) |
-| POST | `/api/v1/auth/device-token` | Register FCM token | Bearer JWT |
-| GET  | `/api/v1/auth/auth0/status` | Is Auth0 enabled? | none |
-| POST | `/api/v1/auth/auth0/login` | Exchange Auth0 token for internal JWT | none |
-| POST | `/api/v1/auth/auth0/complete-registration` | Create local user from Auth0 token | none |
-| GET  | `/api/v1/admin/users` | List all users | Bearer JWT (admin) |
-| PATCH | `/api/v1/admin/users/{id}/verify` | Verify a user | Bearer JWT (admin) |
-| PATCH | `/api/v1/admin/users/{id}/approve-documents` | Approve worker docs | Bearer JWT (admin) |
-| PATCH | `/api/v1/admin/users/{id}/reject-documents` | Reject worker docs | Bearer JWT (admin) |
-| PATCH | `/api/v1/admin/users/{id}/suspend` | Suspend user | Bearer JWT (admin) |
-| PATCH | `/api/v1/admin/users/{id}/clear-suspension` | Lift suspension | Bearer JWT (admin) |
-| GET  | `/api/v1/admin/users/{id}/documents` | Get worker docs | Bearer JWT (admin) |
-| DELETE | `/api/v1/admin/users/{id}` | Delete user | Bearer JWT (admin) |
-
-Swagger UI is available at `http://localhost:5001/swagger` (only when accessed
-directly, not through the gateway, since the gateway does not currently expose
-Swagger).
-
-## Database
-This service owns a single PostgreSQL database (`iam_db` in docker-compose).
-Tables (snake_case):
-
-- `users` — User aggregate
-- `worker_documents` — uploaded PDFs (stored as base64)
-
-The schema is created automatically on first startup via
-`Database.EnsureCreatedAsync()`. 
-
-## Architecture decisions
-
-### Database-per-service
-This service owns its own `iam_db`. No other microservice talks to this database
-directly. If another service needs IAM data, it goes through the IAM REST API.
-
-### JWT validated by both Gateway and microservice
-The gateway validates the JWT before routing (defense at the edge), and this
-service also validates the JWT in its own middleware (defense in depth). The
-custom `RequestAuthorizationMiddleware` not only validates the signature but
-also fetches the full `User` aggregate from the database and stores it in
-`HttpContext.Items["User"]` so controllers can use it directly.
-
-### Auth0 complete-registration changed
-In the monolith, `POST /api/auth/auth0/complete-registration` created BOTH the
-User AND the Profile (Client or Worker) in a single request because Profile
-lived in the same process. In this microservice split, IAM only creates the
-User aggregate. The endpoint returns `needsProfileSetup: true` in the response
-so the frontend knows to call Profile Service afterwards.
-
-**Frontend change required**: after a successful `complete-registration`, the
-frontend must `POST /api/v1/profiles/...` with the profile data.
-
-### Admin notifications postponed
-Endpoints that previously sent push notifications via the Notifications module
-(approve-documents, reject-documents, suspend, clear-suspension) no longer send
-those notifications. When the Communication Service is added with a RabbitMQ
-broker, these endpoints will publish events (`WorkerDocumentsApproved`,
-`WorkerDocumentsRejected`, `UserSuspended`, `UserSuspensionCleared`) that
-Communication Service will consume to send the notifications. For this iteration
-the notifications are silently skipped (with TODO comments in the code).
-
-## License
-
-For academic use - InCleanHome team.
+- **Database-per-service**: owns `iam_db`. No other service reads from it directly.
+- **JWT validation**: signs HS256 tokens. Validated by gateway + by this service's
+  custom `RequestAuthorizationMiddleware`.
+- **HTTP coupling to Profile**: `/auth/me` and Auth0 endpoints make HTTP calls to
+  Profile Service to keep the frontend contract identical to the monolith. This
+  is intentional acoplamiento sincrónico for those endpoints; everything else
+  is event-driven.
+- **Events**: published with MassTransit + RabbitMQ. Soft-fail if broker is
+  unavailable (the state change is already persisted; eventing is best-effort).

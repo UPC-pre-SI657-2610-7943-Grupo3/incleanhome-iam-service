@@ -1,8 +1,5 @@
 namespace InCleanHome.IamService.Domain.Model.ValueObjects;
 
-/// <summary>
-///     User role value object. The frontend uses lowercase "client"/"worker" — we stay consistent.
-/// </summary>
 public static class UserRole
 {
     public const string Client = "client";

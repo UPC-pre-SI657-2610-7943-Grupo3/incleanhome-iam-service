@@ -1,23 +1,25 @@
-using InCleanHome.IamService.Application.Internal.OutboundServices;
 using InCleanHome.IamService.Domain.Model.Aggregates;
 using InCleanHome.IamService.Domain.Model.Commands;
 using InCleanHome.IamService.Domain.Model.ValueObjects;
 using InCleanHome.IamService.Domain.Repositories;
 using InCleanHome.IamService.Domain.Services;
+using InCleanHome.IamService.Infrastructure.Messaging.Events;
+using MassTransit;
 
 namespace InCleanHome.IamService.Application.Internal.CommandServices;
 
 /// <summary>
-/// Command handler for the IAM bounded context.
+/// Command handler for the IAM bounded context. Publishes integration events
+/// to RabbitMQ via MassTransit after each state-changing operation so other
+/// microservices (especially Communication) can react.
 /// </summary>
 public class UserCommandService(
     IUserRepository userRepository,
     IWorkerDocumentRepository workerDocumentRepository,
-    IHashingService hashingService,
-    ITokenService tokenService,
-    IUnitOfWork unitOfWork) : IUserCommandService
+    IUnitOfWork unitOfWork,
+    IPublishEndpoint publishEndpoint,
+    ILogger<UserCommandService> logger) : IUserCommandService
 {
-    // Administrative commands (migrated from monolith)
     public async Task Handle(VerifyUserCommand command)
     {
         var user = await userRepository.FindByIdAsync(command.UserId)
@@ -38,6 +40,12 @@ public class UserCommandService(
         user.MarkDocumentsAsVerified();
         userRepository.Update(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new WorkerDocumentsApprovedEvent
+        {
+            UserId = user.Id,
+            Email  = user.Email
+        });
     }
 
     public async Task Handle(RejectWorkerDocumentsCommand command)
@@ -51,6 +59,12 @@ public class UserCommandService(
         user.MarkDocumentsAsRejected();
         userRepository.Update(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new WorkerDocumentsRejectedEvent
+        {
+            UserId = user.Id,
+            Email  = user.Email
+        });
     }
 
     public async Task Handle(SuspendUserCommand command)
@@ -60,6 +74,14 @@ public class UserCommandService(
         user.Suspend(command.Duration, command.Reason);
         userRepository.Update(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new UserSuspendedEvent
+        {
+            UserId         = user.Id,
+            Email          = user.Email,
+            Reason         = command.Reason,
+            SuspendedUntil = user.SuspendedUntil ?? DateTimeOffset.UtcNow
+        });
     }
 
     public async Task Handle(ClearUserSuspensionCommand command)
@@ -69,6 +91,12 @@ public class UserCommandService(
         user.ClearSuspension();
         userRepository.Update(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new UserSuspensionClearedEvent
+        {
+            UserId = user.Id,
+            Email  = user.Email
+        });
     }
 
     public async Task Handle(UploadWorkerDocumentCommand command)
@@ -82,8 +110,6 @@ public class UserCommandService(
         if (user.Role != UserRole.Worker)
             throw new Exception("Only workers can upload documents");
 
-        // Replace any existing document of the same type so we keep at most one
-        // per document_type per worker.
         var existing = (await workerDocumentRepository.FindByUserIdAsync(command.UserId)).ToList();
         foreach (var old in existing.Where(d => d.DocumentType == command.DocumentType))
             workerDocumentRepository.Remove(old);
@@ -130,6 +156,12 @@ public class UserCommandService(
 
         userRepository.Remove(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new UserDeletedEvent
+        {
+            UserId = user.Id,
+            Email  = user.Email
+        });
     }
 
     public async Task Handle(RegisterDeviceTokenCommand command)
@@ -140,5 +172,29 @@ public class UserCommandService(
         user.UpdateDeviceToken(command.Token);
         userRepository.Update(user);
         await unitOfWork.CompleteAsync();
+
+        await SafePublishAsync(new UserDeviceTokenUpdatedEvent
+        {
+            UserId = user.Id,
+            Token  = command.Token,
+            Role   = user.Role
+        });
+    }
+
+    /// <summary>
+    /// Publish an event but never crash the calling operation if the broker is
+    /// unreachable. The state change has already been persisted; eventing is
+    /// best-effort.
+    /// </summary>
+    private async Task SafePublishAsync<T>(T evt) where T : class
+    {
+        try
+        {
+            await publishEndpoint.Publish(evt);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to publish {EventType}. Continuing without eventing.", typeof(T).Name);
+        }
     }
 }

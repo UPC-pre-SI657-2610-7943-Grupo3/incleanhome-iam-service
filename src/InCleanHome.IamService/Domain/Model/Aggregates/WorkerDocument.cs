@@ -5,7 +5,7 @@ namespace InCleanHome.IamService.Domain.Model.Aggregates;
 
 /// <summary>
 ///     A document uploaded by a worker during onboarding (background check / experience).
-///     The file is stored as base64 — pluggable later to S3/Blob if needed.
+///     Stored as base64 to keep deployment simple — pluggable later to S3/Blob if needed.
 /// </summary>
 public class WorkerDocument : IEntityWithCreatedUpdatedDate
 {

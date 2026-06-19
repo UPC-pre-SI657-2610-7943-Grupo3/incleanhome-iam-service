@@ -4,17 +4,9 @@ using InCleanHome.IamService.Domain.Services;
 
 namespace InCleanHome.IamService.Infrastructure.Pipeline;
 
-/// <summary>
-/// Attribute that marks an endpoint as accessible without a valid JWT.
-/// </summary>
 [AttributeUsage(AttributeTargets.Method)]
 public class AllowAnonymousAttribute : Attribute { }
 
-/// <summary>
-/// Resolves the authenticated user from the JWT and attaches it to
-/// <c>HttpContext.Items["User"]</c>. Endpoints decorated with
-/// <see cref="AllowAnonymousAttribute"/> bypass this check.
-/// </summary>
 public class RequestAuthorizationMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(
@@ -22,6 +14,7 @@ public class RequestAuthorizationMiddleware(RequestDelegate next)
         IUserQueryService userQueryService,
         ITokenService tokenService)
     {
+        // Skip JWT for well-known public paths (health checks, swagger, root).
         var path = context.Request.Path.Value ?? string.Empty;
         if (path == "/" ||
             path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
@@ -30,7 +23,7 @@ public class RequestAuthorizationMiddleware(RequestDelegate next)
             await next(context);
             return;
         }
-        
+
         var endpoint = context.Request.HttpContext.GetEndpoint();
         var allowAnonymous = endpoint?.Metadata
             .Any(m => m.GetType() == typeof(AllowAnonymousAttribute)) ?? false;

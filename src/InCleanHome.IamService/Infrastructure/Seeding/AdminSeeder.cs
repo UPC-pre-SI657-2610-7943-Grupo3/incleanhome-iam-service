@@ -8,11 +8,6 @@ namespace InCleanHome.IamService.Infrastructure.Seeding;
 
 public static class AdminSeeder
 {
-    /// <summary>
-    /// Ensures an admin user exists. Reads ADMIN_EMAIL and ADMIN_PASSWORD env
-    /// vars (or AdminSeed:Email / AdminSeed:Password from config). Skips silently
-    /// if either is missing.
-    /// </summary>
     public static async Task SeedAsync(IServiceProvider services, Microsoft.Extensions.Logging.ILogger logger)
     {
         using var scope = services.CreateScope();

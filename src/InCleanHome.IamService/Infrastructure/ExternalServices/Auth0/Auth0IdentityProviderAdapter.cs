@@ -1,50 +1,43 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Json;
 using System.Text.Json;
+using InCleanHome.IamService.Domain.Services.External;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
 namespace InCleanHome.IamService.Infrastructure.ExternalServices.Auth0;
 
-public interface IAuth0Service
-{
-    bool IsEnabled { get; }
-    Task<Auth0UserInfo?> ValidateAndGetUserInfoAsync(string accessToken);
-}
-
-public record Auth0UserInfo(string Sub, string Email, string Name, string? Picture);
-
 /// <summary>
-/// Auth0 integration.
-///   1. Frontend logs in via Auth0 Universal Login and gets an access_token (RS256 JWT).
-///   2. Frontend POSTs the token to /api/v1/auth/auth0/login.
-///   3. We validate the JWT against the JWKS public keys of the tenant.
-///   4. If valid, we GET /userinfo to fetch email/name/picture.
-///   5. The caller decides whether to create/look up the local user and issue an internal JWT.
+/// Concrete adapter for Auth0 implementing <see cref="IIdentityProvider"/>.
+/// Validates RS256 JWTs against the JWKS public keys and fetches /userinfo.
 /// </summary>
-public class Auth0Service : IAuth0Service
+public class Auth0IdentityProviderAdapter : IIdentityProvider
 {
     private readonly Auth0Settings _settings;
     private readonly HttpClient _http;
-    private static readonly JwtSecurityTokenHandler _jwtHandler = new();
 
-    // Simple in-memory cache for the JWKS (refreshed every 6 hours).
     private static JsonWebKeySet? _jwksCache;
     private static DateTime _jwksCacheExpiresAt = DateTime.MinValue;
     private static readonly SemaphoreSlim _jwksLock = new(1, 1);
 
-    public Auth0Service(IOptions<Auth0Settings> options, IHttpClientFactory httpFactory)
+    public Auth0IdentityProviderAdapter(IOptions<Auth0Settings> options, IHttpClientFactory httpFactory)
     {
         _settings = options.Value;
-        _http     = httpFactory.CreateClient("auth0");
+        _http = httpFactory.CreateClient("auth0");
     }
 
     public bool IsEnabled => _settings.Enabled && !string.IsNullOrWhiteSpace(_settings.Domain);
 
-    public async Task<Auth0UserInfo?> ValidateAndGetUserInfoAsync(string accessToken)
+    public async Task<IdentityProviderUserInfo?> ValidateAndGetUserInfoAsync(string accessToken)
     {
-        if (!IsEnabled || string.IsNullOrWhiteSpace(accessToken)) return null;
+        if (!IsEnabled)
+        {
+            Console.WriteLine("[Auth0] Disabled — refusing to validate token.");
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(accessToken)) return null;
 
+        // 1) Validate signature against JWKS.
         try
         {
             var jwks = await GetJwksAsync();
@@ -59,7 +52,14 @@ public class Auth0Service : IAuth0Service
                 ValidateLifetime         = true,
                 ClockSkew                = TimeSpan.FromMinutes(2)
             };
-            _jwtHandler.ValidateToken(accessToken, validationParameters, out _);
+
+            var handler = new JsonWebTokenHandler();
+            var result = await handler.ValidateTokenAsync(accessToken, validationParameters);
+            if (!result.IsValid)
+            {
+                Console.WriteLine($"[Auth0] Token invalid: {result.Exception?.Message}");
+                return null;
+            }
         }
         catch (Exception e)
         {
@@ -67,6 +67,7 @@ public class Auth0Service : IAuth0Service
             return null;
         }
 
+        // 2) Fetch /userinfo for email/name/picture.
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, $"https://{_settings.Domain}/userinfo");
@@ -82,7 +83,7 @@ public class Auth0Service : IAuth0Service
 
             if (string.IsNullOrWhiteSpace(email)) return null;
 
-            return new Auth0UserInfo(sub, email, name, pic);
+            return new IdentityProviderUserInfo(sub, email, name, pic);
         }
         catch (Exception e)
         {
